@@ -1,0 +1,74 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongo:27017/assetspatial
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - GRIDFS_BUCKET_PHOTOS=photos
+      - GRIDFS_BUCKET_DOCUMENTS=documents
+      - GRIDFS_BUCKET_EXCEL=excel
+      - MAX_PHOTO_SIZE_MB=${MAX_PHOTO_SIZE_MB:-15}
+      - MAX_PHOTOS_PER_ASSET=${MAX_PHOTOS_PER_ASSET:-50}
+      - MAX_DOCUMENT_SIZE_MB=${MAX_DOCUMENT_SIZE_MB:-50}
+      - MAX_EXCEL_SIZE_MB=${MAX_EXCEL_SIZE_MB:-100}
+      - TESSERACT_LANG=${TESSERACT_LANG:-eng+yor+hau}
+      - TESSERACT_WORKERS=${TESSERACT_WORKERS:-2}
+      - CLIENT_URL=${CLIENT_URL:-http://localhost:5173}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    command: --wiredTigerCacheSizeGB 1.5
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo-express:
+    image: mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_URL=mongodb://mongo:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=${MONGO_EXPRESS_USER:-admin}
+      - ME_CONFIG_BASICAUTH_PASSWORD=${MONGO_EXPRESS_PASS:-pass}
+    depends_on:
+      - mongo
+    profiles:
+      - dev
+
+volumes:
+  mongo_data:
+  redis_data:

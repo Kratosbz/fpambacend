@@ -1,0 +1,226 @@
+'use strict';
+const mongoose = require('mongoose');
+const { Schema, Types } = mongoose;
+
+// ── File reference sub-schema ─────────────────────────────────────────────────
+const fileRefSchema = new Schema({
+  fileId:       { type: Types.ObjectId, required: true },
+  filename:     String,
+  originalname: String,
+  mimeType:     String,
+  contentType:  String,
+  sizeBytes:    Number,
+  length:       Number,
+  capturedAt:   Date,
+  uploadedAt:   { type: Date, default: Date.now },
+}, { _id: true });
+
+// ── Maintenance log sub-schema ────────────────────────────────────────────────
+const maintenanceLogSchema = new Schema({
+  date:     { type: Date, required: true },
+  desc:     { type: String, required: true },
+  tech:     String,
+  cost:     { type: Number, min: 0 },
+  amount:   Number,
+  loggedBy: { type: Types.ObjectId, ref: 'User' },
+}, { _id: true, timestamps: false });
+
+// ── Condition history sub-schema ──────────────────────────────────────────────
+const conditionHistorySchema = new Schema({
+  from:      String,
+  to:        String,
+  changedAt: { type: Date, default: Date.now },
+  changedBy: { type: Types.ObjectId, ref: 'User' },
+}, { _id: false });
+
+// ── Lifecycle history sub-schema ──────────────────────────────────────────────
+const lifecycleHistorySchema = new Schema({
+  from:      String,
+  to:        String,
+  at:        { type: Date, default: Date.now },
+  by:        String,
+  note:      String,
+  document:  String,
+}, { _id: false });
+
+// ── Main asset schema ─────────────────────────────────────────────────────────
+const assetSchema = new Schema({
+  assetId: { type: String, required: true, unique: true, index: true },
+  name:    { type: String, required: true, trim: true },
+
+  type: {
+    type:     String,
+    required: true,
+    enum: ['Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment'],
+  },
+  geomType: {
+    type:    String,
+    enum:    ['Point', 'Polygon', 'Linear'],
+    default: 'Point',
+  },
+
+  location: {
+    type:        { type: String, default: 'Point', enum: ['Point'] },
+    coordinates: { type: [Number], required: true },
+  },
+
+  geometry: { type: Schema.Types.Mixed },
+
+  condition: { type: String, enum: ['Good', 'Fair', 'Poor', 'Critical'] },
+  material:  String,
+  elevation: Number,
+  area:      Number,
+  notes:     String,
+
+  typeData: { type: Schema.Types.Mixed, default: {} },
+
+  capturedBy: { type: Types.ObjectId, ref: 'User' },
+
+  // ── Classification ────────────────────────────────────────────────────────
+  mda:    { type: String, default: '' },
+  sector: {
+    type: String,
+    default: '',
+    enum: [
+      '',
+      'Administration & Governance',
+      'Defence & Security',
+      'Education',
+      'Health',
+      'Infrastructure & Works',
+      'Energy & Power',
+      'Agriculture & Food Security',
+      'Water Resources',
+      'Transportation',
+      'Finance & Economy',
+      'Justice & Legal Affairs',
+      'Environment',
+      'Communications & Digital',
+      'Social Development',
+      'Science & Technology',
+      'Trade & Investment',
+      'Petroleum & Mineral Resources',
+      'Labour & Employment',
+      'Foreign Affairs',
+      'Culture, Tourism & Sports',
+    ],
+  },
+
+  state:   String,
+  lga:     String,
+  address: String,
+
+  status: {
+    type:    String,
+    enum:    ['Active', 'Under Maintenance', 'Decommissioned', 'Disputed', 'Recovered'],
+    default: 'Active',
+  },
+
+  // ── Assessment ────────────────────────────────────────────────────────────
+  assessed: {
+    type:    String,
+    enum:    ['Assessed', 'Unassessed'],
+    default: 'Unassessed',
+  },
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  lifecycleStage: {
+    type:    String,
+    enum:    ['Draft', 'Active', 'Under Maintenance', 'Under Review', 'Scheduled for Disposal', 'Decommissioned'],
+    default: 'Active',
+  },
+  lifecycleHistory: [lifecycleHistorySchema],
+  lifecycleDocs:    [{ name: String, stage: String, at: { type: Date, default: Date.now } }],
+
+  // ── Relationships ─────────────────────────────────────────────────────────
+  parentId:  { type: String, default: null, index: true },   // assetId of parent
+  childIds:  { type: [String], default: [] },                // assetIds of children
+
+  nextInspection:     Date,
+  lastInspection:     Date,
+  inspectionInterval: { type: Number, default: 365 },
+
+  conditionHistory: [conditionHistorySchema],
+
+  photos:    [fileRefSchema],
+  documents: [fileRefSchema],
+
+  xlDatasets: [{
+    _id:          { type: Types.ObjectId, auto: true },
+    fileId:       Types.ObjectId,
+    filename:     String,
+    originalname: String,
+    contentType:  String,
+    sizeBytes:    Number,
+    length:       Number,
+    rowCount:     Number,
+    columns:      [String],
+    uploadedAt:   { type: Date, default: Date.now },
+  }],
+
+  maintenanceLogs: [maintenanceLogSchema],
+
+  valuation: {
+    amount:   Number,
+    currency: { type: String, default: 'NGN' },
+    valuedAt: Date,
+    valuedBy: String,
+    method: {
+      type: String,
+      enum: ['Replacement Cost', 'Market Comparable', 'Depreciated',
+             'Market Value', 'Income Approach', 'Book Value', 'Professional Estimate'],
+    },
+    notes: String,
+  },
+
+  qrPayload: String,
+
+  ocrSource: {
+    filename:  String,
+    engine:    { type: String, enum: ['tesseract', 'manual'] },
+    rawText:   String,
+    scannedAt: Date,
+  },
+
+  captureDate: { type: Date, default: Date.now },
+}, {
+  timestamps: true,
+  toJSON:     { virtuals: true },
+  toObject:   { virtuals: true },
+});
+
+// ── Virtuals ──────────────────────────────────────────────────────────────────
+assetSchema.virtual('excel').get(function () {
+  return (this.xlDatasets || []).map(d => ({
+    ...d.toObject ? d.toObject() : d,
+    _id:          d._id || d.fileId,
+    originalname: d.originalname || d.filename,
+    contentType:  d.contentType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    length:       d.length || d.sizeBytes,
+    uploadDate:   d.uploadedAt,
+  }));
+});
+
+assetSchema.virtual('lat').get(function () {
+  return this.location?.coordinates?.[1] ?? null;
+});
+assetSchema.virtual('lng').get(function () {
+  return this.location?.coordinates?.[0] ?? null;
+});
+
+// ── Indexes ───────────────────────────────────────────────────────────────────
+assetSchema.index({ location: '2dsphere' });
+assetSchema.index({ type: 1, condition: 1 });
+assetSchema.index({ state: 1, lga: 1 });
+assetSchema.index({ mda: 1 });
+assetSchema.index({ sector: 1 });
+assetSchema.index({ capturedBy: 1 });
+assetSchema.index({ status: 1 });
+assetSchema.index({ captureDate: -1 });
+assetSchema.index({ nextInspection: 1 });
+assetSchema.index({ lifecycleStage: 1 });
+assetSchema.index({ parentId: 1 });
+assetSchema.index({ 'maintenanceLogs.date': 1 });
+assetSchema.index({ name: 'text', notes: 'text', address: 'text' });
+
+module.exports = mongoose.model('Asset', assetSchema);

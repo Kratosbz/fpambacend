@@ -1,0 +1,53 @@
+{
+  "name": "assetspatial-backend",
+  "version": "1.0.0",
+  "description": "Production backend for AssetSpatial — Nigerian federal public asset enumeration platform",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "seed": "node scripts/seed.js",
+    "migrate": "node scripts/migrate.js",
+    "import-fpam": "node scripts/importFPAM.js",
+    "test": "jest --runInBand --forceExit",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3",
+    "mongodb": "^6.3.0",
+    "ioredis": "^5.3.2",
+    "bull": "^4.12.0",
+    "socket.io": "^4.6.2",
+    "multer": "^1.4.5-lts.1",
+    "multer-gridfs-storage": "^5.0.2",
+    "sharp": "^0.33.1",
+    "exifr": "^7.1.3",
+    "exceljs": "^4.4.0",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0",
+    "node-tesseract-ocr": "^2.2.1",
+    "@turf/turf": "^6.5.0",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "express-rate-limit": "^7.1.5",
+    "rate-limit-redis": "^4.2.0",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0",
+    "dotenv": "^16.3.1",
+    "pdfkit": "^0.14.0",
+    "cors": "^2.8.5",
+    "gridfs-stream": "^1.1.1",
+    "crypto": "^1.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
