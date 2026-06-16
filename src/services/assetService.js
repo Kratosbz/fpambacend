@@ -5,11 +5,24 @@ const AssetCodeIndex = require('../utils/assetCodeIndex');
 const Mda            = require('../models/Mda');
 
 // ── ID generation ─────────────────────────────────────────────────────────────
+// Previously sorted by createdAt to find "the last" asset and incremented its
+// number. That breaks the moment any asset has a backdated/preserved
+// createdAt (e.g. bulk imports carrying the original field-survey date) —
+// the most-recently-inserted document isn't necessarily the highest-numbered
+// one, so this could hand out an assetId that's already taken. Find the
+// actual maximum numeric suffix in use instead, via aggregation so it scales
+// without pulling every document to the app server.
 async function nextAssetId() {
-  const last = await Asset.findOne({}, { assetId: 1 }).sort({ createdAt: -1 }).lean();
-  if (!last?.assetId) return 'AST-1001';
-  const num = parseInt(last.assetId.replace('AST-', ''), 10);
-  return isNaN(num) ? 'AST-1001' : `AST-${num + 1}`;
+  const result = await Asset.aggregate([
+    { $match: { assetId: { $regex: /^AST-\d+$/ } } },
+    { $project: {
+        num: { $toInt: { $substrCP: ['$assetId', 4, { $subtract: [{ $strLenCP: '$assetId' }, 4] }] } },
+    }},
+    { $sort: { num: -1 } },
+    { $limit: 1 },
+  ]);
+  const max = result[0]?.num;
+  return Number.isInteger(max) ? `AST-${max + 1}` : 'AST-1001';
 }
 
 // ── Asset code generation ─────────────────────────────────────────────────────
@@ -76,27 +89,47 @@ function normaliseAsset(asset) {
 
 // ── createAsset ───────────────────────────────────────────────────────────────
 async function createAsset(body, userId) {
-  const assetId   = await nextAssetId();
-  const assetCode = await generateAssetCode({
-    mda:         body.mda,
-    type:        body.type,
-    state:       body.state,
-    captureDate: body.captureDate,
-  });
+  const MAX_RETRIES = 5;
+  let lastErr;
 
-  const data = computeSpatial({
-    ...body,
-    assetId,
-    assetCode,
-    capturedBy: userId,
-    location: {
-      type: 'Point',
-      coordinates: body.coordinates,
-    },
-  });
-  delete data.coordinates;
-  const asset = await Asset.create(data);
-  return normaliseAsset(asset.toObject());
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const assetId   = await nextAssetId();
+    const assetCode = await generateAssetCode({
+      mda:         body.mda,
+      type:        body.type,
+      state:       body.state,
+      captureDate: body.captureDate,
+    });
+
+    const data = computeSpatial({
+      ...body,
+      assetId,
+      assetCode,
+      capturedBy: userId,
+      location: {
+        type: 'Point',
+        coordinates: body.coordinates,
+      },
+    });
+    delete data.coordinates;
+
+    try {
+      const asset = await Asset.create(data);
+      return normaliseAsset(asset.toObject());
+    } catch (err) {
+      // Duplicate assetId or assetCode — most likely two requests racing for
+      // the same next ID / sequence number. assetCode's seq is derived from
+      // countDocuments on a prefix match, which has the same race exposure
+      // nextAssetId used to. Recompute both and retry rather than a 500.
+      const dupField = err?.code === 11000 ? Object.keys(err.keyPattern || {})[0] : null;
+      if (dupField === 'assetId' || dupField === 'assetCode') {
+        lastErr = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 // ── listAssets ────────────────────────────────────────────────────────────────
