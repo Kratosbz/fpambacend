@@ -36,6 +36,7 @@ app.use(cors({
   origin: (origin, cb) => {
     const allowed = !origin
       || origin === env.CLIENT_URL
+      ||origin === "https://fpam.vercel.app"
       || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
     cb(null, allowed);
   },
