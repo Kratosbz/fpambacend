@@ -115,6 +115,82 @@ router.get('/search', ...auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── APPROVALS ─────────────────────────────────────────────────────────────────
+
+// GET /assets/approvals?status=Pending&limit=200
+// Returns assets filtered by approvalStatus. Accessible to Sub-Head+.
+router.get('/approvals', ...auth, async (req, res, next) => {
+  try {
+    const { status = 'Pending', limit = 200 } = req.query;
+    const query = status === 'all' ? {} : { approvalStatus: status };
+    const assets = await Asset.find(query)
+      .sort({ createdAt: -1 })
+      .limit(Number(limit))
+      .populate('submittedBy', 'name email role')
+      .populate('capturedBy',  'name email role')
+      .lean();
+    res.json({ assets });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/approvals/summary — counts per status
+router.get('/approvals/summary', ...auth, async (req, res, next) => {
+  try {
+    const [pending, approved, rejected] = await Promise.all([
+      Asset.countDocuments({ approvalStatus: 'Pending' }),
+      Asset.countDocuments({ approvalStatus: 'Approved' }),
+      Asset.countDocuments({ approvalStatus: 'Rejected' }),
+    ]);
+    res.json({ pending, approved, rejected });
+  } catch (err) { next(err); }
+});
+
+// POST /assets/:id/approve
+router.post('/:id/approve',
+  ...auth, requirePerm('canApprove'),
+  auditLog('ASSET_APPROVED', 'Asset'),
+  async (req, res, next) => {
+    try {
+      const query = assetQuery(req.params.id);
+      const asset = await Asset.findOneAndUpdate(
+        query,
+        { $set: { approvalStatus: 'Approved', reviewedBy: req.user._id, reviewedAt: new Date() } },
+        { new: true }
+      ).lean();
+      if (!asset) return res.status(404).json({ error: 'Asset not found' });
+      res.locals.auditDetail = `${asset.name} approved`;
+      res.json({ asset });
+    } catch (err) { next(err); }
+  }
+);
+
+// POST /assets/:id/reject
+router.post('/:id/reject',
+  ...auth, requirePerm('canApprove'),
+  auditLog('ASSET_REJECTED', 'Asset'),
+  async (req, res, next) => {
+    try {
+      const query = assetQuery(req.params.id);
+      const asset = await Asset.findOneAndUpdate(
+        query,
+        { $set: {
+            approvalStatus:  'Rejected',
+            reviewedBy:      req.user._id,
+            reviewedAt:      new Date(),
+            rejectionReason: req.body.reason || '',
+          }
+        },
+        { new: true }
+      ).lean();
+      if (!asset) return res.status(404).json({ error: 'Asset not found' });
+      res.locals.auditDetail = `${asset.name} rejected — ${req.body.reason || 'no reason given'}`;
+      res.json({ asset });
+    } catch (err) { next(err); }
+  }
+);
+
+
+
 router.post('/',
   ...auth, requirePerm('canCreateAssets'), validateBody(schemas.asset),
   auditLog('ASSET_CREATED', 'Asset'),
