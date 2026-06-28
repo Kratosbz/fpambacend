@@ -123,13 +123,34 @@ router.get('/approvals', ...auth, async (req, res, next) => {
   try {
     const { status = 'Pending', limit = 200 } = req.query;
     const query = status === 'all' ? {} : { approvalStatus: status };
-    const assets = await Asset.find(query)
+
+    // Use plain MongoDB find (no Mongoose model) to avoid schema validation
+    // silently dropping documents that have unexpected field types
+    const db = Asset.db.db;
+    const assets = await db.collection('assets')
+      .find(query)
       .sort({ createdAt: -1 })
       .limit(Number(limit))
-      .populate('submittedBy', 'name email role')
-      .populate('capturedBy',  'name email role')
-      .lean();
-    res.json({ assets });
+      .toArray();
+
+    // Manually populate capturedBy and submittedBy
+    const User = require('../models/User');
+    const userIds = [...new Set(
+      assets.flatMap(a => [a.capturedBy, a.submittedBy].filter(Boolean).map(String))
+    )];
+    const { ObjectId: OID } = require('mongodb');
+    const users = await User.find({
+      _id: { $in: userIds.map(id => { try { return new OID(id); } catch { return null; } }).filter(Boolean) }
+    }, 'name email role').lean();
+    const userMap = Object.fromEntries(users.map(u => [String(u._id), u]));
+
+    const hydrated = assets.map(a => ({
+      ...a,
+      capturedBy:  a.capturedBy  ? (userMap[String(a.capturedBy)]  || a.capturedBy)  : null,
+      submittedBy: a.submittedBy ? (userMap[String(a.submittedBy)] || a.submittedBy) : null,
+    }));
+
+    res.json({ assets: hydrated });
   } catch (err) { next(err); }
 });
 
