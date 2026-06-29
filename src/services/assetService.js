@@ -150,7 +150,7 @@ async function createAsset(body, userId, role) {
 
 // ── listAssets ────────────────────────────────────────────────────────────────
 async function listAssets({
-  type, condition, state, lga, geomType, status, approvalStatus,
+  type, condition, state, lga, geomType, status, approvalStatus, assessed,
   page = 1, limit = 50,
   scopeFilter = {},
 } = {}) {
@@ -165,6 +165,8 @@ async function listAssets({
   if (lga)       filter.lga       = lga;
   if (geomType)  filter.geomType  = geomType;
   if (status)    filter.status    = status;
+  if (assessed === 'Assessed')   filter.assessed = 'Assessed';
+  if (assessed === 'Unassessed') filter.assessed = { $in: ['Unassessed', null, undefined, ''] };
 
   // ── Approval gate ──────────────────────────────────────────────────────
   // The main registry (dashboard, map, asset list, exports) should never
