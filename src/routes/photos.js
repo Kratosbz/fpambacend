@@ -18,8 +18,9 @@ router.post('/', ...auth, requirePerm('canCreateAssets'),
     try {
       if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
 
-      const query = req.params.assetId.startsWith('AST-')
-        ? { assetId: req.params.assetId } : { _id: req.params.assetId };
+      const _aid = req.params.assetId;
+      const query = (_aid.startsWith('AST-') || _aid.startsWith('FGN-'))
+        ? { assetId: _aid } : { _id: _aid };
       const asset = await Asset.findOne(query);
       if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
@@ -76,8 +77,9 @@ router.delete('/:fileId', ...auth, requirePerm('canEditAssets'),
   async (req, res, next) => {
     try {
       await photoSvc.deletePhoto(req.params.fileId);
-      const query = req.params.assetId.startsWith('AST-')
-        ? { assetId: req.params.assetId } : { _id: req.params.assetId };
+      const _aid = req.params.assetId;
+      const query = (_aid.startsWith('AST-') || _aid.startsWith('FGN-'))
+        ? { assetId: _aid } : { _id: _aid };
       await Asset.findOneAndUpdate(query, {
         $pull: { photos: { fileId: req.params.fileId } },
       });
