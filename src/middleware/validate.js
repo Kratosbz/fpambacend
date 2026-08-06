@@ -69,9 +69,14 @@ const schemas = {
   createUser: Joi.object({
     name:     Joi.string().required(),
     email:    Joi.string().email().required(),
-    role:     Joi.string().valid('Field Agent', 'Sub-Head', 'Supervisor', 'GIS Analyst', 'System Admin').required(),
+    role:     Joi.string().valid('Field Agent', 'Sub-Head', 'Supervisor', 'GIS Analyst', 'System Admin', 'MDA Agent').required(),
     password: Joi.string().min(8).required(),
     color:    Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/),
+    // NOTE: division and mda were previously absent from this schema — with
+    // stripUnknown:true that meant both fields were silently discarded on
+    // every user creation, not just for the new MDA Agent role. Fixed here.
+    division: Joi.string().allow('', null),
+    mda:      Joi.string().allow('', null),
     zone:     Joi.string().allow(''),
     states:   Joi.array().items(Joi.string()),
     lgas:     Joi.array().items(Joi.string()),
@@ -79,25 +84,30 @@ const schemas = {
 
   // User update
   updateUser: Joi.object({
-    name:   Joi.string(),
-    role:   Joi.string().valid('Field Agent', 'Sub-Head', 'Supervisor', 'GIS Analyst', 'System Admin'),
-    color:  Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/),
-    zone:   Joi.string().allow(''),
-    states: Joi.array().items(Joi.string()),
-    lgas:   Joi.array().items(Joi.string()),
+    name:     Joi.string(),
+    role:     Joi.string().valid('Field Agent', 'Sub-Head', 'Supervisor', 'GIS Analyst', 'System Admin', 'MDA Agent'),
+    color:    Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/),
+    division: Joi.string().allow('', null),
+    mda:      Joi.string().allow('', null),
+    zone:     Joi.string().allow(''),
+    states:   Joi.array().items(Joi.string()),
+    lgas:     Joi.array().items(Joi.string()),
   }),
 
   // Permission overrides — short key names matching the frontend and User model
   permissions: Joi.object({
-    canCreate:         Joi.boolean(),
-    canEdit:           Joi.boolean(),
-    canDelete:         Joi.boolean(),
-    canApprove:        Joi.boolean(),
-    canExport:         Joi.boolean(),
-    canViewAll:        Joi.boolean(),
-    canManageUsers:    Joi.boolean(),
-    canViewAudit:      Joi.boolean(),
-    canManageSettings: Joi.boolean(),
+    canCreate:              Joi.boolean(),
+    canEdit:                Joi.boolean(),
+    canDelete:              Joi.boolean(),
+    canApprove:             Joi.boolean(),
+    canExport:              Joi.boolean(),
+    canViewAll:             Joi.boolean(),
+    canManageUsers:         Joi.boolean(),
+    canViewAudit:           Joi.boolean(),
+    canManageSettings:      Joi.boolean(),
+    canEditInventory:       Joi.boolean(),
+    canSubmitFormRequests:  Joi.boolean(),
+    canReviewFormRequests:  Joi.boolean(),
   }),
 
   // Maintenance log entry

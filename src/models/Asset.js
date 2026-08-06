@@ -13,6 +13,11 @@ const fileRefSchema = new Schema({
   length:       Number,
   capturedAt:   Date,
   uploadedAt:   { type: Date, default: Date.now },
+  // Set when a photo is uploaded as part of an M&E report submission
+  // (routes/me_routes.js / me.html saveReport()) — lets the report's view
+  // modal show only the photos captured for that specific report, rather
+  // than the asset's entire photo gallery.
+  meReportId:   { type: Types.ObjectId, default: null },
 }, { _id: true });
 
 // ── Maintenance log sub-schema ────────────────────────────────────────────────
@@ -45,6 +50,105 @@ const lifecycleHistorySchema = new Schema({
   note:      String,
   document:  String,
 }, { _id: false });
+
+// ── Inventory item sub-schema ─────────────────────────────────────────────────
+// Mirrors the standard FPAM condition-assessment inventory sheet:
+// INTERNAL/EXTERNAL | ROOM NAME/NUMBERS | FLOOR LEVEL | CATEGORY | ITEM |
+// DESCRIPTION | ROOM DIMENSION | BRAND NAME | QUANTITY | QUANTITY NOT
+// FUNCTIONING | DIMENSION OF DAMAGES/DEFECT | DEFECTS/FAULT (Y/N) | COMMENT
+const inventoryItemSchema = new Schema({
+  location: {
+    type:    String,
+    enum:    ['INTERNAL', 'EXTERNAL'],
+    default: 'INTERNAL',
+  },
+  roomName:               String,   // "ROOM NAME / NUMBERS"
+  floorLevel:             String,
+  category: {
+    type:    String,
+    enum:    ['MECHANICAL', 'ELECTRICAL', 'STRUCTURAL', 'OTHER'],
+    default: 'OTHER',
+  },
+  item:                   String,
+  description:            String,
+  roomDimension:          String,
+  brandName:              String,
+  quantity:               { type: Number, min: 0, default: 0 },
+  quantityNotFunctioning: { type: Number, min: 0, default: 0 },
+  dimensionOfDamage:      String,
+  hasDefect:              { type: Boolean, default: false }, // Y/N column
+  comment:                String, // free text: REPLACE / GOOD / SERVICE / etc.
+
+  // Provenance — which uploaded file this row came from, so the digital
+  // record always traces back to the original submitted sheet.
+  sourceFileId: Types.ObjectId,
+  sourceRow:    Number,   // 1-indexed row number in the source sheet, for audit
+  sourceSheet:  String,   // worksheet name, for multi-sheet imports
+
+  addedBy:  { type: Types.ObjectId, ref: 'User' },
+  editedBy: { type: Types.ObjectId, ref: 'User' },
+}, { _id: true, timestamps: true });
+
+// ── M&E report sub-schema ─────────────────────────────────────────────────────
+// Embedded monthly progress report + clearance certificate, written/read by
+// routes/me_routes.js. Two variants share this shape: 'secretariat' (10 task
+// items) and 'nhp' (9 task items) — see SECRETARIAT_TASKS/NHP_TASKS in that
+// route file for the canonical task labels.
+const meReportSchema = new Schema({
+  // Contract header
+  contractNo:        String,
+  contractorName:     String,
+  contractorAddress:  String,
+  contractSum:        Number,
+  contractPeriod:     String,
+  commencementDate:   String,
+  completionPeriod:   String,
+  reportLocation:     String,
+
+  // Report identity
+  reportType:  { type: String, enum: ['secretariat', 'nhp'], required: true },
+  reportMonth: { type: Number, min: 1, max: 12, required: true },
+  reportYear:  { type: Number, required: true },
+
+  // Task progress
+  tasks: [{
+    _id:        false,
+    label:      String,
+    percentage: { type: Number, min: 0, max: 100, default: 0 },
+  }],
+  overallPercentage: { type: Number, min: 0, max: 100, default: 0 },
+
+  // Ratings
+  labourRating:      { type: String, enum: ['Very Good', 'Good', 'Fair', 'Poor'] },
+  materialsRating:   { type: String, enum: ['Very Good', 'Good', 'Fair', 'Poor'] },
+  progressRating:    { type: String, enum: ['Very Good', 'Good', 'Fair', 'Poor'] },
+  workmanshipRating: { type: String, enum: ['Very Good', 'Good', 'Fair', 'Poor'] },
+  otherComments:     String,
+
+  // CRA (Chief Resident Architect) sign-off
+  craName:        String,
+  craDesignation: String,
+  craDate:        String,
+
+  // Clearance certificate
+  clearanceIssued:      { type: Boolean, default: false },
+  clearanceDate:        Date,
+  clearanceMonth:       String,
+  satisfactory:         Boolean,
+  unsatisfactoryWorks:  String,
+  facilityManagerName:  String,
+  facilityManagerDesig: String,
+  facilityManagerDate:  String,
+
+  status: {
+    type:    String,
+    enum:    ['Draft', 'Submitted', 'Cleared', 'Not Cleared'],
+    default: 'Draft',
+  },
+
+  submittedBy: { type: Types.ObjectId, ref: 'User' },
+  submittedAt: Date,
+}, { _id: true, timestamps: true });
 
 // ── Main asset schema ─────────────────────────────────────────────────────────
 const assetSchema = new Schema({
@@ -179,6 +283,16 @@ const assetSchema = new Schema({
 
   maintenanceLogs: [maintenanceLogSchema],
 
+  // ── Inventory / Condition Assessment ─────────────────────────────────────
+  // Structured replication of the FPAM inventory sheet — see inventoryItemSchema
+  // above. Populated either manually (Inventory tab) or via Excel import
+  // (routes/inventory_routes.js: import-preview → import-commit).
+  inventoryItems: [inventoryItemSchema],
+
+  // ── M&E Monthly Progress Reports / Clearance Certificates ────────────────
+  // See meReportSchema above. Written/read entirely by routes/me_routes.js.
+  meReports: [meReportSchema],
+
   valuation: {
     amount:   Number,
     currency: { type: String, default: 'NGN' },
@@ -242,6 +356,10 @@ assetSchema.index({ parentId: 1 });
 assetSchema.index({ approvalStatus: 1 });
 assetSchema.index({ submittedBy: 1 });
 assetSchema.index({ 'maintenanceLogs.date': 1 });
+assetSchema.index({ 'meReports.status': 1 });
+assetSchema.index({ 'meReports.reportYear': 1, 'meReports.reportMonth': 1 });
+assetSchema.index({ 'inventoryItems.category': 1 });
+assetSchema.index({ 'inventoryItems.hasDefect': 1 });
 assetSchema.index({ name: 'text', notes: 'text', address: 'text' });
 
 module.exports = mongoose.model('Asset', assetSchema);

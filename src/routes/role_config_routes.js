@@ -20,9 +20,9 @@ const adminOnly = [...auth, requirePerm('canManageSettings')];
 const FRONTEND_KEYS = [
   'canCreate', 'canEdit', 'canDelete', 'canApprove',
   'canExport', 'canViewAll', 'canManageUsers', 'canViewAudit', 'canManageSettings',
+  'canEditInventory',                              // ← add
 ];
 
-// Long-key (RoleConfig model) → short-key (frontend) mapping
 const TO_SHORT = {
   canCreateAssets:   'canCreate',
   canEditAssets:     'canEdit',
@@ -31,22 +31,9 @@ const TO_SHORT = {
   canExportData:     'canExport',
   canViewAuditLog:   'canViewAudit',
   canChangeSettings: 'canManageSettings',
-  canRunOCR:         null,
-  canViewAnalytics:  null,
-  canBulkDelete:     null,
-  canBulkExport:     null,
-  maxPhotosPerAsset: null,
-  maxAssetsPerDay:   null,
-  // Short keys pass through
-  canCreate:         'canCreate',
-  canEdit:           'canEdit',
-  canDelete:         'canDelete',
-  canApprove:        'canApprove',
-  canExport:         'canExport',
-  canViewAll:        'canViewAll',
-  canManageUsers:    'canManageUsers',
-  canViewAudit:      'canViewAudit',
-  canManageSettings: 'canManageSettings',
+  canEditInventory:  'canEditInventory',            // ← add — passes through unchanged
+  // ...rest unchanged
+  canEditInventory:  'canEditInventory',            // ← also add to the short-keys-pass-through block
 };
 
 // Normalize any mix of long/short keys → short keys only

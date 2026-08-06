@@ -25,12 +25,21 @@ const usersRoute     = require('./routes/users');
 const auditRoute     = require('./routes/audit');
 const settingsRoute  = require('./routes/settings');
 
+
 // ✅ MDA ROUTE ADDED
 const mdaRoute       = require('./routes/mda_routes');
 
 // ✅ M&E ROUTES ADDED
 const meRoute        = require('./routes/me_routes');
 
+// ✅ INVENTORY ROUTE ADDED — Inventory tab (manual CRUD + Excel import/export)
+const inventoryRoute = require('./routes/inventory_routes');
+// Alongside your other route requires:
+const formRequestsRoute = require('./routes/form_requests_routes');
+
+// Alongside your other app.use() mounts (order doesn't matter here — this
+// route isn't nested under /api/assets, so there's no catch-all collision
+// risk like with me_routes.js):
 const app = express();
 
 // Trust proxy (Render/Reverse Proxy)
@@ -80,6 +89,10 @@ app.use('/api/assets/:assetId/photos',     photosRoute);
 app.use('/api/assets/:assetId/documents', documentsRoute);
 app.use('/api/assets/:assetId/excel',     excelRoute);
 
+// 👇 INVENTORY ROUTE MOUNTED HERE — same nested-resource pattern as
+// photos/documents/excel above (mergeParams, /:assetId/inventory/*)
+app.use('/api/assets/:assetId/inventory', inventoryRoute);
+
 app.use('/api/analytics', analyticsRoute);   // ← now points to analytics_routes.js
 app.use('/api/ocr',       ocrRoute);
 app.use('/api/users/role-config', require('./routes/role_config_routes'));
@@ -95,6 +108,8 @@ app.use('/api/inspections', require('./routes/inspection_routes'));
 app.use('/api/assets/:assetId/inspections', require('./routes/inspection_routes'));
 
 app.use('/api/assets/files', require('./routes/files_route'));
+
+app.use('/api/form-requests', formRequestsRoute);
 
 // ── Global error handler ──────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
