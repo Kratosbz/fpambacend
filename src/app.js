@@ -77,8 +77,18 @@ app.use('/api/auth',      authRoute);
 // catch-all GET /:id that would swallow /:id/me-reports before meRoute sees it.
 app.use('/api/assets', meRoute);
 
+// Export routes MUST also be mounted before assetsRoute, and at the correct
+// sub-path — exportRoute's internal paths ('/', '/bulk') are written assuming
+// a base of '/api/assets/export', not '/api/assets'. Mounting it at
+// '/api/assets' (as before) made '/' resolve to plain '/api/assets' and
+// '/bulk' resolve to '/api/assets/bulk' — neither of which is
+// '/api/assets/export' or '/api/assets/export/bulk', so those requests fell
+// through every router and hit Express's default 404. Mounting it before
+// assetsRoute also avoids assetsRoute's GET /:id catching '/api/assets/export'
+// as id === 'export'.
+app.use('/api/assets/export', exportRoute);
+
 app.use('/api/assets',    assetsRoute);
-app.use('/api/assets',    exportRoute);
 app.use('/api/assets/spatial', spatialRoute);
 
 // 👇 MDA ROUTE MOUNTED HERE

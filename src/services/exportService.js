@@ -1,8 +1,16 @@
 'use strict';
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 const Asset   = require('../models/Asset');
 
-const ASSET_FIELDS = ['assetId','name','type','geomType','condition','material','state','lga','address','status','captureDate','createdAt'];
+// NOTE: 'condition' intentionally excluded from all exports per FPAM request.
+const ASSET_FIELDS = ['assetId','name','type','geomType','material','state','lga','address','status','captureDate','createdAt'];
+
+// PDF exports are rendered row-by-row (not streamed from a DB cursor into a
+// giant table the way CSV/XLSX are), so keep this bounded to avoid producing
+// a multi-thousand-page file or timing out the request. Bulk exports (a
+// user-selected set of assets) will almost always be well under this.
+const PDF_ROW_LIMIT = 2000;
 
 /**
  * Stream CSV directly to response. Handles 100k+ assets.
@@ -49,7 +57,6 @@ async function streamGeoJSON(res, scopeFilter = {}, extraFilter = {}) {
         assetId:   asset.assetId,
         name:      asset.name,
         type:      asset.type,
-        condition: asset.condition,
         state:     asset.state,
         lga:       asset.lga,
         status:    asset.status,
@@ -77,7 +84,6 @@ async function streamXLSX(res, scopeFilter = {}, extraFilter = {}) {
     ws.columns = [
       { header: 'Asset ID', key: 'assetId', width: 12 },
       { header: 'Name',     key: 'name',    width: 30 },
-      { header: 'Condition',key: 'condition',width: 12 },
       { header: 'State',    key: 'state',   width: 14 },
       { header: 'LGA',      key: 'lga',     width: 14 },
       { header: 'Status',   key: 'status',  width: 16 },
@@ -88,13 +94,103 @@ async function streamXLSX(res, scopeFilter = {}, extraFilter = {}) {
     const cursor = Asset.find({ ...scopeFilter, ...extraFilter, type }).cursor();
     for await (const asset of cursor) {
       const [lng, lat] = asset.location?.coordinates || [null, null];
-      ws.addRow({ assetId: asset.assetId, name: asset.name, condition: asset.condition,
+      ws.addRow({ assetId: asset.assetId, name: asset.name,
         state: asset.state, lga: asset.lga, status: asset.status, lat, lng }).commit();
     }
     await ws.commit();
   }
 
   await wb.commit();
+}
+
+/**
+ * Stream a formatted PDF table of assets. Bounded to PDF_ROW_LIMIT rows —
+ * callers exceeding that should be pointed to CSV/XLSX instead.
+ */
+async function streamPDF(res, scopeFilter = {}, extraFilter = {}) {
+  const query = { ...scopeFilter, ...extraFilter };
+  const total = await Asset.countDocuments(query);
+
+  if (total > PDF_ROW_LIMIT) {
+    res.status(413).json({
+      error: `PDF export is limited to ${PDF_ROW_LIMIT} assets (matched ${total}). Use CSV or XLSX for larger exports.`,
+    });
+    return;
+  }
+
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', 'attachment; filename="assets_export.pdf"');
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
+  doc.pipe(res);
+
+  const columns = [
+    { key: 'assetId', label: 'Asset ID',  width: 100 },
+    { key: 'name',     label: 'Name',      width: 170 },
+    { key: 'type',     label: 'Type',      width: 100 },
+    { key: 'state',    label: 'State',     width: 90 },
+    { key: 'lga',      label: 'LGA',       width: 90 },
+    { key: 'status',   label: 'Status',    width: 80 },
+    { key: 'valuation',label: 'Valuation (NGN)', width: 110 },
+  ];
+  const tableLeft  = doc.page.margins.left;
+  const tableWidth = columns.reduce((s, c) => s + c.width, 0);
+  const rowHeight  = 20;
+
+  function drawHeader() {
+    doc.fillColor('#0B2545')
+      .fontSize(16)
+      .text('AssetSpatial — Federal Public Asset Export', tableLeft, 30);
+    doc.fontSize(9).fillColor('#5A6A7A')
+      .text(`Generated ${new Date().toLocaleString('en-NG')}  •  ${total} asset${total === 1 ? '' : 's'}`, tableLeft, 52);
+    doc.moveDown();
+
+    let y = doc.y + 8;
+    doc.rect(tableLeft, y, tableWidth, rowHeight).fill('#0B2545');
+    let x = tableLeft;
+    doc.fontSize(9).fillColor('#FFFFFF');
+    for (const col of columns) {
+      doc.text(col.label, x + 4, y + 6, { width: col.width - 8, ellipsis: true });
+      x += col.width;
+    }
+    return y + rowHeight;
+  }
+
+  let y = drawHeader();
+  let rowIndex = 0;
+
+  const cursor = Asset.find(query).cursor();
+  for await (const asset of cursor) {
+    if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage({ size: 'A4', layout: 'landscape', margin: 30 });
+      y = drawHeader();
+    }
+
+    if (rowIndex % 2 === 1) {
+      doc.rect(tableLeft, y, tableWidth, rowHeight).fill('#F4F6F9');
+    }
+
+    let x = tableLeft;
+    doc.fontSize(8.5).fillColor('#1A1A1A');
+    const values = {
+      assetId: asset.assetId || '',
+      name:    asset.name || '',
+      type:    asset.type || '',
+      state:   asset.state || '',
+      lga:     asset.lga || '',
+      status:  asset.status || '',
+      valuation: asset.valuation?.amount ? Number(asset.valuation.amount).toLocaleString('en-NG') : '',
+    };
+    for (const col of columns) {
+      doc.text(String(values[col.key]), x + 4, y + 6, { width: col.width - 8, ellipsis: true });
+      x += col.width;
+    }
+
+    y += rowHeight;
+    rowIndex += 1;
+  }
+
+  doc.end();
 }
 
 function csvCell(val) {
@@ -105,4 +201,4 @@ function csvCell(val) {
     : str;
 }
 
-module.exports = { streamCSV, streamGeoJSON, streamXLSX };
+module.exports = { streamCSV, streamGeoJSON, streamXLSX, streamPDF };

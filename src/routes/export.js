@@ -8,7 +8,7 @@ const exportSvc = require('../services/exportService');
 
 const auth = [authenticate, resolvePermissions, scopeFilter, requirePerm('canExportData')];
 
-// GET /api/assets/export?format=csv|json|geojson|xlsx
+// GET /api/assets/export?format=csv|json|geojson|xlsx|pdf
 router.get('/', ...auth, auditLog('EXPORT', 'System'), async (req, res, next) => {
   try {
     const fmt = (req.query.format || 'json').toLowerCase();
@@ -16,6 +16,7 @@ router.get('/', ...auth, auditLog('EXPORT', 'System'), async (req, res, next) =>
       case 'csv':     return exportSvc.streamCSV(res, req.scopeFilter);
       case 'geojson': return exportSvc.streamGeoJSON(res, req.scopeFilter);
       case 'xlsx':    return exportSvc.streamXLSX(res, req.scopeFilter);
+      case 'pdf':     return exportSvc.streamPDF(res, req.scopeFilter);
       case 'json':
       default: {
         const Asset = require('../models/Asset');
@@ -28,7 +29,7 @@ router.get('/', ...auth, auditLog('EXPORT', 'System'), async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
-// GET /api/assets/export/bulk?ids=AST-1,AST-2
+// GET /api/assets/export/bulk?ids=AST-1,AST-2&format=csv|json|geojson|xlsx|pdf
 router.get('/bulk', ...auth, requirePerm('canBulkExport'), auditLog('BULK_EXPORT', 'System'),
   async (req, res, next) => {
     try {
@@ -40,6 +41,7 @@ router.get('/bulk', ...auth, requirePerm('canBulkExport'), auditLog('BULK_EXPORT
         case 'csv':     return exportSvc.streamCSV(res, {}, extraFilter);
         case 'geojson': return exportSvc.streamGeoJSON(res, {}, extraFilter);
         case 'xlsx':    return exportSvc.streamXLSX(res, {}, extraFilter);
+        case 'pdf':     return exportSvc.streamPDF(res, {}, extraFilter);
         default: {
           const Asset = require('../models/Asset');
           const assets = await Asset.find({ assetId: { $in: ids } }).lean();
