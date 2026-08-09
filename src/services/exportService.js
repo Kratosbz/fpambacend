@@ -125,13 +125,12 @@ async function streamPDF(res, scopeFilter = {}, extraFilter = {}) {
   doc.pipe(res);
 
   const columns = [
-    { key: 'assetId', label: 'Asset ID',  width: 100 },
-    { key: 'name',     label: 'Name',      width: 170 },
-    { key: 'type',     label: 'Type',      width: 100 },
-    { key: 'state',    label: 'State',     width: 90 },
-    { key: 'lga',      label: 'LGA',       width: 90 },
-    { key: 'status',   label: 'Status',    width: 80 },
-    { key: 'valuation',label: 'Valuation (NGN)', width: 110 },
+    { key: 'name',     label: 'Name',      width: 250 },
+    { key: 'type',     label: 'Type',      width: 130 },
+    { key: 'state',    label: 'State',     width: 110 },
+    { key: 'lga',      label: 'LGA',       width: 110 },
+    { key: 'status',   label: 'Status',    width: 100 },
+    { key: 'valuation',label: 'Valuation (NGN)', width: 130 },
   ];
   const tableLeft  = doc.page.margins.left;
   const tableWidth = columns.reduce((s, c) => s + c.width, 0);
@@ -173,7 +172,6 @@ async function streamPDF(res, scopeFilter = {}, extraFilter = {}) {
     let x = tableLeft;
     doc.fontSize(8.5).fillColor('#1A1A1A');
     const values = {
-      assetId: asset.assetId || '',
       name:    asset.name || '',
       type:    asset.type || '',
       state:   asset.state || '',
