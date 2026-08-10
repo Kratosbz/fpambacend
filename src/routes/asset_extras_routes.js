@@ -4,7 +4,9 @@
 // These are additional routes that extend the existing asset router.
 
 const router = require('express').Router({ mergeParams: true });
-const Asset  = require('../models/Asset');
+const Asset          = require('../models/Asset');
+const AssetCodeIndex = require('../utils/assetCodeIndex');
+const assetService   = require('../services/assetService');
 const { authenticate }       = require('../middleware/auth');
 const { resolvePermissions } = require('../middleware/resolvePermissions');
 const { auditLog }           = require('../middleware/auditMiddleware');
@@ -14,7 +16,28 @@ const auth = [authenticate, resolvePermissions];
 // ── HELPER ────────────────────────────────────────────────────────────────────
 function assetQuery(id) {
   const isObjectId = /^[a-f\d]{24}$/i.test(id);
-  return isObjectId ? { _id: id } : { assetId: id };
+  if (isObjectId) return { _id: id };
+  // Match on either the legacy/sequential assetId (AST-.../FGN-...) or the
+  // structured assetCode (FGN-{MDA}-{TYPE}-{BRANCH}-{YEAR}-{SEQ}) — callers
+  // throughout the frontend aren't all guaranteed to pass the same one of
+  // these two identifiers, and a lookup that only checks assetId silently
+  // 404s ("Asset not found") for anything that's actually an assetCode.
+  return { $or: [{ assetId: id }, { assetCode: id }] };
+}
+
+// Every asset created before the assetCode schema fix (v2, 2026) — or any
+// legacy asset that predates the coding system entirely — may not have an
+// assetCode yet. Rather than block child-linking on a manual migration run,
+// self-heal it here: generate and persist one on the spot the first time
+// it's needed. Cheap (one countDocuments) and idempotent.
+async function ensureAssetCode(asset) {
+  if (asset.assetCode) return asset.assetCode;
+  const code = await assetService.generateAssetCode({
+    mda: asset.mda, type: asset.type, state: asset.state, captureDate: asset.captureDate,
+  });
+  asset.assetCode = code;
+  await asset.save({ validateBeforeSave: false });
+  return code;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -42,7 +65,8 @@ router.get('/:id/relationships', ...auth, async (req, res) => {
 });
 
 // POST /api/assets/:id/relationships/link
-// Body: { childId }  — links childId as a child of :id
+// Body: { childId }  — links childId as a child of :id, and stamps the
+// child with a {parentCode}-C{seq} code (see utils/assetCodeIndex.js).
 router.post('/:id/relationships/link', ...auth, auditLog('ASSET_LINKED', 'Asset'), async (req, res) => {
   try {
     const { childId } = req.body;
@@ -55,17 +79,40 @@ router.post('/:id/relationships/link', ...auth, auditLog('ASSET_LINKED', 'Asset'
     if (!parent) return res.status(404).json({ error: 'Parent asset not found' });
     if (!child)  return res.status(404).json({ error: 'Child asset not found' });
     if (parent.assetId === child.assetId) return res.status(400).json({ error: 'Cannot link asset to itself' });
+    if (AssetCodeIndex.isChildCode(parent.assetCode)) {
+      return res.status(400).json({ error: 'Parent asset is itself a child asset — one level of nesting only' });
+    }
 
     // Add child to parent's childIds (deduplicate)
     if (!parent.childIds.includes(child.assetId)) {
       parent.childIds.push(child.assetId);
-      await parent.save();
+      // validateBeforeSave:false — legacy assets frequently lack fields the
+      // schema marks required (location, type, etc.); linking shouldn't
+      // fail because of unrelated missing data on an otherwise-valid asset.
+      await parent.save({ validateBeforeSave: false });
     }
-    // Set parent on child
-    child.parentId = parent.assetId;
-    await child.save();
 
-    res.json({ ok: true, parentId: parent.assetId, childId: child.assetId });
+    // Ensure the parent has a base code to build the child's code from —
+    // self-heals assets created before the assetCode schema fix.
+    const parentCode = await ensureAssetCode(parent);
+
+    // Sequence resets per parent and is never reused (mirrors the base
+    // FGN-...-{SEQ} rule) — so derive the next C-number from the highest
+    // C-seq already in use among this parent's *current* children, not a
+    // plain count, in case an earlier child was unlinked.
+    const siblings = parent.childIds.length
+      ? await Asset.find({ assetId: { $in: parent.childIds } }, { assetCode: 1 }).lean()
+      : [];
+    const maxSeq = siblings.reduce((max, s) => {
+      const parsed = AssetCodeIndex.parseChildCode(s.assetCode);
+      return parsed && parsed.parentCode === parentCode ? Math.max(max, parsed.seq) : max;
+    }, 0);
+
+    child.parentId  = parent.assetId;
+    child.assetCode = AssetCodeIndex.buildChildCode({ parentCode, seq: maxSeq + 1 });
+    await child.save({ validateBeforeSave: false });
+
+    res.json({ ok: true, parentId: parent.assetId, childId: child.assetId, childCode: child.assetCode });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -76,11 +123,23 @@ router.delete('/:id/relationships/unlink', ...auth, auditLog('ASSET_UNLINKED', '
     const { childId } = req.body;
     if (!childId) return res.status(400).json({ error: 'childId required' });
 
-    await Promise.all([
-      Asset.updateOne(assetQuery(req.params.id), { $pull: { childIds: childId } }),
-      Asset.updateOne(assetQuery(childId), { $set: { parentId: null } }),
-    ]);
-    res.json({ ok: true });
+    const child = await Asset.findOne(assetQuery(childId));
+    if (!child) return res.status(404).json({ error: 'Child asset not found' });
+
+    await Asset.updateOne(assetQuery(req.params.id), { $pull: { childIds: childId } });
+
+    // A freed child is no longer a component of anything, so it gets its
+    // own independent base code rather than keeping a dangling -Cxx tail
+    // that points at a relationship which no longer exists. The retired
+    // C-number itself is never reissued to a future sibling (see link
+    // handler above).
+    child.parentId  = null;
+    child.assetCode = await assetService.generateAssetCode({
+      mda: child.mda, type: child.type, state: child.state, captureDate: child.captureDate,
+    });
+    await child.save({ validateBeforeSave: false });
+
+    res.json({ ok: true, newChildCode: child.assetCode });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -149,7 +208,7 @@ router.post('/:id/lifecycle/transition', ...auth, auditLog('LIFECYCLE_TRANSITION
     };
     asset.status = statusMap[stage] || asset.status;
 
-    await asset.save();
+    await asset.save({ validateBeforeSave: false });
     res.json({ stage, history: asset.lifecycleHistory, status: asset.status });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -200,7 +259,7 @@ router.post('/bulk-update', ...auth, auditLog('BULK_UPDATE', 'Asset'), async (re
         }
 
         Object.assign(asset, update);
-        await asset.save();
+        await asset.save({ validateBeforeSave: false });
         results.updated++;
       } catch (e) {
         results.failed++;

@@ -88,6 +88,19 @@ app.use('/api/assets', meRoute);
 // as id === 'export'.
 app.use('/api/assets/export', exportRoute);
 
+// Extra asset routes (relationships, lifecycle, bulk-update, completeness,
+// health-extras) MUST also be mounted before assetsRoute, for the exact same
+// reason as meRoute/exportRoute above. Several of this router's paths are a
+// single segment off /api/assets — /health-extras, /completeness,
+// /bulk-update — and assetsRoute's GET /:id catch-all was swallowing those
+// as if "health-extras"/"completeness" were an asset ID, 404ing before this
+// router ever saw the request. That silently broke the frontend's
+// /health-extras capability probe (js/api_additions.js), which meant
+// AS_BACKEND.relationships/lifecycle/bulkUpdate/completeness never flipped
+// to true — so js/lifecycle.js's relationship linking silently fell back to
+// localStorage-only and never reached the database at all.
+app.use('/api/assets', require('./routes/asset_extras_routes'));
+
 app.use('/api/assets',    assetsRoute);
 app.use('/api/assets/spatial', spatialRoute);
 
@@ -109,9 +122,6 @@ app.use('/api/users/role-config', require('./routes/role_config_routes'));
 app.use('/api/users',     usersRoute);
 app.use('/api/audit',     auditRoute);
 app.use('/api/settings',  settingsRoute);
-
-// Extra asset routes (relationships, lifecycle, bulk-update, completeness)
-app.use('/api/assets', require('./routes/asset_extras_routes'));
 
 // Inspection routes
 app.use('/api/inspections', require('./routes/inspection_routes'));

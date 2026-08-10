@@ -6,6 +6,8 @@
 const router     = require('express').Router({ mergeParams: true });
 const Inspection = require('../models/Inspection');
 const Asset      = require('../models/Asset');
+const AssetCodeIndex = require('../utils/assetCodeIndex');
+const assetService   = require('../services/assetService');
 const { authenticate }              = require('../middleware/auth');
 const { resolvePermissions }        = require('../middleware/resolvePermissions');
 const { auditLog }                  = require('../middleware/auditMiddleware');
@@ -151,17 +153,42 @@ router.post('/:id/approve', ...auth, auditLog('INSPECTION_APPROVED', 'Inspection
     if (!insp) return res.status(404).json({ error: 'Not found' });
     if (insp.status !== 'Submitted') return res.status(400).json({ error: 'Can only approve Submitted inspections' });
 
+    const asset = await Asset.findOne({ assetId: insp.assetId });
+
+    // ── Visit coding (v2, 2026) ─────────────────────────────────────────────
+    // Approval is the moment this inspection becomes "real" — a Submitted
+    // report that later gets Rejected never burns a visit number. Scoped
+    // per asset: count how many of THIS asset's inspections are already
+    // Approved, and this one becomes the next visit.
+    if (asset) {
+      const priorApproved = await Inspection.countDocuments({
+        assetId: insp.assetId,
+        status:  'Approved',
+        _id:     { $ne: insp._id },
+      });
+      const visitSeq   = priorApproved + 1;
+      const assetCode  = asset.assetCode || await (async () => {
+        // Self-heal — asset predates the assetCode schema fix.
+        const code = await assetService.generateAssetCode({
+          mda: asset.mda, type: asset.type, state: asset.state, captureDate: asset.captureDate,
+        });
+        asset.assetCode = code;
+        return code;
+      })();
+
+      insp.visitSeq       = visitSeq;
+      insp.inspectionCode = AssetCodeIndex.buildInspectionCode({ assetCode, visitSeq });
+    }
+
     insp.status     = 'Approved';
     insp.reviewedAt = new Date();
     insp.reviewedBy = req.user?.name || 'Supervisor';
     insp.history.push({ status: 'Approved', at: new Date(), by: req.user?.name || 'Supervisor' });
     await insp.save();
 
-    // Update asset condition + lastInspection
-    if (insp.report?.condition) {
-      const assetQuery = { assetId: insp.assetId };
-      const asset = await Asset.findOne(assetQuery);
-      if (asset) {
+    // Update asset condition + lastInspection + inspection count
+    if (asset) {
+      if (insp.report?.condition) {
         const prevCondition = asset.condition;
         asset.condition      = insp.report.condition;
         asset.lastInspection = insp.report.date || new Date();
@@ -177,8 +204,11 @@ router.post('/:id/approve', ...auth, auditLog('INSPECTION_APPROVED', 'Inspection
         if (insp.report.recommendations) {
           asset.notes = (asset.notes ? asset.notes + '\n' : '') + `[Inspection ${insp.inspectionId}] ${insp.report.recommendations}`;
         }
-        await asset.save();
       }
+      if (insp.visitSeq) {
+        asset.inspectionCount = insp.visitSeq;
+      }
+      await asset.save({ validateBeforeSave: false });
     }
 
     res.json({ inspection: insp });

@@ -153,12 +153,30 @@ const meReportSchema = new Schema({
 // ── Main asset schema ─────────────────────────────────────────────────────────
 const assetSchema = new Schema({
   assetId: { type: String, required: true, unique: true },
+
+  // Structured FGN-{MDA}-{TYPE}-{BRANCH}-{YEAR}-{SEQ} code (see utils/assetCodeIndex.js).
+  // sparse:true is required alongside unique:true — legacy assets that
+  // predate this field (or haven't been backfilled by migrateAssetCodes.js
+  // yet) will have assetCode === undefined, and a plain unique index would
+  // reject every doc after the first one with a missing value.
+  //
+  // NOTE (v2, 2026): this field was referenced throughout assetService.js
+  // and migrateAssetCodes.js from day one, but was never actually declared
+  // on the schema — Mongoose's default strict mode silently dropped it on
+  // every .save()/bulkWrite() before it reached MongoDB. Every asset coded
+  // prior to this fix needs migrateAssetCodes.js re-run to actually persist.
+  assetCode: { type: String, unique: true, sparse: true, index: true },
+
   name:    { type: String, required: true, trim: true },
 
   type: {
     type:     String,
     required: true,
-    enum: ['Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment'],
+    enum: [
+      'Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment', 'Monument',
+      'Administrative Office', 'Residential', 'Hospital', 'School', 'Laboratory',
+      'Warehouse', 'Court', 'Security Facility',
+    ],
   },
   geomType: {
     type:    String,
@@ -239,6 +257,19 @@ const assetSchema = new Schema({
     default: 'Active',
   },
 
+  // ── Duplicate-name guard (v2, 2026) ──────────────────────────────────────
+  // Scoped to name + state + MDA — two assets in the same state under the
+  // same MDA can't share a name, but the same generic name (e.g. "Pencil")
+  // is allowed to recur freely elsewhere. Deliberately excludes child/
+  // component assets (parentId set): a "Mathematics Set" child literally
+  // named "Pencil" is expected to collide in name with another parent's
+  // "Pencil" in the same state+MDA, and that's correct, not a duplicate
+  // capture — child identity is already disambiguated by its -Cxx code.
+  // Computed automatically in the pre('validate') hook below; never set
+  // this directly. null/undefined is excluded from the partial unique
+  // index, so legacy assets missing state/mda are never blocked by this.
+  dupKey: { type: String, default: null },
+
   // ── Assessment ────────────────────────────────────────────────────────────
   assessed: {
     type:    String,
@@ -256,12 +287,21 @@ const assetSchema = new Schema({
   lifecycleDocs:    [{ name: String, stage: String, at: { type: Date, default: Date.now } }],
 
   // ── Relationships ─────────────────────────────────────────────────────────
+  // See utils/assetCodeIndex.js buildChildCode() — a linked child's assetCode
+  // becomes {parentAssetCode}-C{seq}, so this parentId/childIds pair remains
+  // the source of truth while the code is a human-readable projection of it.
   parentId:  { type: String, default: null },                 // assetId of parent
   childIds:  { type: [String], default: [] },                // assetIds of children
 
   nextInspection:     Date,
   lastInspection:     Date,
   inspectionInterval: { type: Number, default: 365 },
+  // Cached count of Approved formal inspections (capture itself never counts
+  // — see routes/inspection_routes.js POST /:id/approve). Denormalised here
+  // purely for a fast "Inspected N×" badge without a separate Inspection
+  // query on every asset list render. The full per-visit INSP-xx codes live
+  // on the Inspection documents themselves (model/Inspection.js).
+  inspectionCount: { type: Number, default: 0 },
 
   conditionHistory: [conditionHistorySchema],
 
@@ -322,6 +362,22 @@ const assetSchema = new Schema({
   toObject:   { virtuals: true },
 });
 
+// ── Duplicate-name key computation ─────────────────────────────────────────────
+// Recomputed on every validate pass so it always reflects the current
+// name/state/mda/parentId, whether this is a new doc or an edit via
+// asset.save(). NOTE: this hook does NOT fire on Model.findOneAndUpdate()/
+// updateOne() — those bypass document middleware entirely. assetService.js's
+// updateAsset() replicates this exact logic manually before those calls;
+// keep the two in sync if this ever changes.
+function computeDupKey(doc) {
+  if (doc.parentId) return null;              // children are exempt — see field comment above
+  if (!doc.name || !doc.state || !doc.mda) return null;
+  return [doc.name, doc.state, doc.mda].map(s => String(s).trim().toLowerCase()).join('|');
+}
+assetSchema.pre('validate', function () {
+  this.dupKey = computeDupKey(this);
+});
+
 // ── Virtuals ──────────────────────────────────────────────────────────────────
 assetSchema.virtual('excel').get(function () {
   return (this.xlDatasets || []).map(d => ({
@@ -353,6 +409,14 @@ assetSchema.index({ captureDate: -1 });
 assetSchema.index({ nextInspection: 1 });
 assetSchema.index({ lifecycleStage: 1 });
 assetSchema.index({ parentId: 1 });
+assetSchema.index({ childIds: 1 });
+// Partial: only assets with a real dupKey (non-child, name+state+mda all
+// present) participate — legacy/incomplete assets and child components are
+// excluded entirely rather than colliding on a shared null/undefined value.
+assetSchema.index(
+  { dupKey: 1 },
+  { unique: true, partialFilterExpression: { dupKey: { $type: 'string' } }, name: 'uniq_name_state_mda' }
+);
 assetSchema.index({ approvalStatus: 1 });
 assetSchema.index({ submittedBy: 1 });
 assetSchema.index({ 'maintenanceLogs.date': 1 });

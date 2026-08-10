@@ -47,7 +47,11 @@ const schemas = {
   // Asset creation / update
   asset: Joi.object({
     name:        Joi.string().required(),
-    type:        Joi.string().valid('Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment').required(),
+    type:        Joi.string().valid(
+      'Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment', 'Monument',
+      'Administrative Office', 'Residential', 'Hospital', 'School', 'Laboratory',
+      'Warehouse', 'Court', 'Security Facility',
+    ).required(),
     geomType:    Joi.string().valid('Point', 'Polygon', 'Linear').default('Point'),
     coordinates: coordinatesSchema,
     geometry:    Joi.object(),            // GeoJSON for polygon/linear

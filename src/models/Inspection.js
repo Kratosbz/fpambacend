@@ -45,6 +45,20 @@ const inspectionSchema = new Schema({
   reviewedBy:      String,
   rejectionReason: String,
 
+  // ── Visit coding (v2, 2026) ────────────────────────────────────────────────
+  // Assigned only on approval (see routes/inspection_routes.js POST
+  // /:id/approve) — the initial field capture never counts as visit 1, and
+  // a Submitted-but-not-yet-Approved inspection doesn't hold a number
+  // either, so a later Rejected report never burns a visit slot.
+  // visitSeq is scoped per asset (by its assetCode/assetId): the 1st
+  // approved inspection for a given asset is visitSeq 1, its 2nd is 2, etc.
+  // inspectionCode is the derived, human-readable projection of that:
+  // {ASSET CODE}-INSP-{visitSeq}, e.g. FGN-FMWH-INF-008-2026-0031-INSP-02.
+  // The asset's own code is never modified to add this — see
+  // utils/assetCodeIndex.js buildInspectionCode().
+  visitSeq:       { type: Number, default: null },
+  inspectionCode: { type: String, default: null },
+
   history: [historySchema],
   createdBy: String,
 }, {
@@ -60,5 +74,7 @@ inspectionSchema.pre('save', async function (next) {
   }
   next();
 });
+
+inspectionSchema.index({ assetId: 1, visitSeq: 1 });
 
 module.exports = mongoose.model('Inspection', inspectionSchema);

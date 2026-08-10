@@ -32,7 +32,9 @@ const mdaSchema = new mongoose.Schema({
   timestamps: true,
 });
 
-mdaSchema.index({ name: 1 });
+// `name` already has its own unique index via `unique: true` above — no
+// need to redeclare it with schema.index(), which is what triggered
+// Mongoose's "Duplicate schema index" warning.
 mdaSchema.index({ active: 1 });
 
 module.exports = mongoose.model('Mda', mdaSchema);

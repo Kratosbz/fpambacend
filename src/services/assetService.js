@@ -133,14 +133,24 @@ async function createAsset(body, userId, role) {
       const asset = await Asset.create(data);
       return normaliseAsset(asset.toObject());
     } catch (err) {
-      // Duplicate assetId or assetCode — most likely two requests racing for
-      // the same next ID / sequence number. assetCode's seq is derived from
-      // countDocuments on a prefix match, which has the same race exposure
-      // nextAssetId used to. Recompute both and retry rather than a 500.
       const dupField = err?.code === 11000 ? Object.keys(err.keyPattern || {})[0] : null;
+
+      // assetId/assetCode collisions are a race between two near-simultaneous
+      // requests computing the same next number — recompute and retry.
       if (dupField === 'assetId' || dupField === 'assetCode') {
         lastErr = err;
         continue;
+      }
+      // dupKey is a genuine business-rule violation (same name already
+      // registered in this state under this MDA), not a race condition —
+      // surface it immediately rather than retrying, with a message that
+      // names what actually collided.
+      if (dupField === 'dupKey') {
+        const dupErr = new Error(
+          `An asset named "${body.name}" already exists in ${body.state} under ${body.mda}.`
+        );
+        dupErr.statusCode = 409;
+        throw dupErr;
       }
       throw err;
     }
@@ -242,6 +252,29 @@ async function updateAsset(id, body) {
     delete data.coordinates;
   }
 
+  // dupKey lives on the Asset schema's pre('validate') hook, which
+  // findOneAndUpdate() below never triggers (it bypasses document
+  // middleware entirely) — so it has to be recomputed here by hand
+  // whenever a field that feeds it might be changing. Needs the asset's
+  // *current* values for whichever of name/state/mda/parentId this update
+  // doesn't touch, hence the extra lookup. `merged` is also reused below
+  // to build a precise error message if the update collides.
+  let merged = null;
+  if (data.name !== undefined || data.state !== undefined || data.mda !== undefined || data.parentId !== undefined) {
+    const current = await Asset.findOne(query, { name: 1, state: 1, mda: 1, parentId: 1 }).lean();
+    if (current) {
+      merged = {
+        name:     data.name     !== undefined ? data.name     : current.name,
+        state:    data.state    !== undefined ? data.state    : current.state,
+        mda:      data.mda      !== undefined ? data.mda      : current.mda,
+        parentId: data.parentId !== undefined ? data.parentId : current.parentId,
+      };
+      data.dupKey = (!merged.parentId && merged.name && merged.state && merged.mda)
+        ? [merged.name, merged.state, merged.mda].map(s => String(s).trim().toLowerCase()).join('|')
+        : null;
+    }
+  }
+
   const update = { $set: data };
 
   if (previousCondition && fields.condition && previousCondition !== fields.condition) {
@@ -254,10 +287,22 @@ async function updateAsset(id, body) {
     };
   }
 
-  const asset = await Asset.findOneAndUpdate(query, update, {
-    new:           true,
-    runValidators: false,
-  }).lean();
+  let asset;
+  try {
+    asset = await Asset.findOneAndUpdate(query, update, {
+      new:           true,
+      runValidators: false,
+    }).lean();
+  } catch (err) {
+    if (err?.code === 11000 && err.keyPattern?.dupKey) {
+      const dupErr = new Error(
+        `An asset named "${merged?.name ?? data.name}" already exists in ${merged?.state ?? data.state} under ${merged?.mda ?? data.mda}.`
+      );
+      dupErr.statusCode = 409;
+      throw dupErr;
+    }
+    throw err;
+  }
 
   return normaliseAsset(asset);
 }

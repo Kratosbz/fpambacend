@@ -77,7 +77,11 @@ async function streamXLSX(res, scopeFilter = {}, extraFilter = {}) {
   res.set('Content-Disposition', 'attachment; filename="assets_export.xlsx"');
 
   const wb      = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res });
-  const types   = ['Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment'];
+  const types   = [
+    'Infrastructure', 'Land / Property', 'Utility', 'Environmental', 'Equipment', 'Monument',
+    'Administrative Office', 'Residential', 'Hospital', 'School', 'Laboratory',
+    'Warehouse', 'Court', 'Security Facility',
+  ];
 
   for (const type of types) {
     const ws = wb.addWorksheet(type);
