@@ -30,10 +30,32 @@ function assetQuery(id) {
 // assetCode yet. Rather than block child-linking on a manual migration run,
 // self-heal it here: generate and persist one on the spot the first time
 // it's needed. Cheap (one countDocuments) and idempotent.
+//
+// Also self-heals a SECOND gap: an asset can already have a code that's
+// technically present but the wrong (older, pre-name-abbreviation) SHAPE —
+// e.g. still v2 (FGN-MDA-TYPE-BRANCH-YEAR-SEQ) because it was never actually
+// run through the migration script. Blindly trusting "it has some code" and
+// building a child code on top of it would permanently bake the stale shape
+// into every child. Upgrading it in place here, preserving mda/type/branch/
+// year/seq exactly, means linking always builds on the CURRENT format
+// regardless of whether the migration script has been run yet.
 async function ensureAssetCode(asset) {
-  if (asset.assetCode) return asset.assetCode;
+  if (asset.assetCode) {
+    const parsed = AssetCodeIndex.parseAssetCode(asset.assetCode);
+    if (parsed?.version === 3) return asset.assetCode;
+    if (parsed?.version === 2) {
+      const nameCode = AssetCodeIndex.nameToAbbr(asset.name);
+      const upgraded = `FGN-${parsed.mdaCode}-${parsed.typeCode}-${nameCode}-${parsed.branchCode}-${parsed.year}-${AssetCodeIndex.formatSeq(parsed.seq)}`;
+      asset.assetCode = upgraded;
+      await asset.save({ validateBeforeSave: false });
+      return upgraded;
+    }
+    // Unparseable shape (shouldn't normally happen) — don't silently
+    // overwrite something we can't confidently interpret.
+    return asset.assetCode;
+  }
   const code = await assetService.generateAssetCode({
-    mda: asset.mda, type: asset.type, state: asset.state, captureDate: asset.captureDate,
+    mda: asset.mda, type: asset.type, name: asset.name, state: asset.state, captureDate: asset.captureDate,
   });
   asset.assetCode = code;
   await asset.save({ validateBeforeSave: false });
@@ -109,7 +131,7 @@ router.post('/:id/relationships/link', ...auth, auditLog('ASSET_LINKED', 'Asset'
     }, 0);
 
     child.parentId  = parent.assetId;
-    child.assetCode = AssetCodeIndex.buildChildCode({ parentCode, seq: maxSeq + 1 });
+    child.assetCode = AssetCodeIndex.buildChildCode({ parentCode, seq: maxSeq + 1, childName: child.name });
     await child.save({ validateBeforeSave: false });
 
     res.json({ ok: true, parentId: parent.assetId, childId: child.assetId, childCode: child.assetCode });
@@ -135,7 +157,7 @@ router.delete('/:id/relationships/unlink', ...auth, auditLog('ASSET_UNLINKED', '
     // handler above).
     child.parentId  = null;
     child.assetCode = await assetService.generateAssetCode({
-      mda: child.mda, type: child.type, state: child.state, captureDate: child.captureDate,
+      mda: child.mda, type: child.type, name: child.name, state: child.state, captureDate: child.captureDate,
     });
     await child.save({ validateBeforeSave: false });
 

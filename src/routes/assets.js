@@ -168,7 +168,7 @@ router.get('/approvals/summary', ...auth, async (req, res, next) => {
 
 // POST /assets/:id/approve
 router.post('/:id/approve',
-  ...auth, requirePerm('canApprove'),
+  ...auth, requirePerm('canApproveAssets'),
   auditLog('ASSET_APPROVED', 'Asset'),
   async (req, res, next) => {
     try {
@@ -187,7 +187,7 @@ router.post('/:id/approve',
 
 // POST /assets/:id/reject
 router.post('/:id/reject',
-  ...auth, requirePerm('canApprove'),
+  ...auth, requirePerm('canApproveAssets'),
   auditLog('ASSET_REJECTED', 'Asset'),
   async (req, res, next) => {
     try {

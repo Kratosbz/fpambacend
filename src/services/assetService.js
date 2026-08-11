@@ -32,23 +32,28 @@ async function nextAssetId() {
 }
 
 // ── Asset code generation ─────────────────────────────────────────────────────
-async function generateAssetCode({ mda, type, state, captureDate }) {
+async function generateAssetCode({ mda, type, name, state, captureDate }) {
   // Load MDA list to resolve short codes
   const mdaList = await Mda.find({ active: true }, { name: 1, shortName: 1 }).lean().catch(() => []);
 
   const year   = captureDate ? new Date(captureDate).getFullYear() : new Date().getFullYear();
   const branch = AssetCodeIndex.getBranchCode(state);
 
-  // Count existing assets with the same MDA + type + branch + year to get next seq
+  // Count existing assets with the same MDA + type + branch + year to get
+  // next seq. Sequence scope deliberately does NOT include the name
+  // abbreviation (v3) — two differently-named assets in the same
+  // MDA+type+branch+year group still share one sequence, exactly as
+  // before v3. Since {NAME} sits BETWEEN {TYPE} and {BRANCH} in the actual
+  // code string, a plain string-prefix match can no longer be used to find
+  // this group — it has to allow any name abbreviation in that position.
   const mdaCode  = AssetCodeIndex.mdaToCode(mda, mdaList);
   const typeCode = AssetCodeIndex.TYPE_CODES[type] || 'UNK';
-  const prefix   = `FGN-${mdaCode}-${typeCode}-${branch}-${year}-`;
+  const esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const groupRegex = `^FGN-${esc(mdaCode)}-${esc(typeCode)}-[A-Z0-9]+-${esc(branch)}-${year}-`;
 
-  const count = await Asset.countDocuments({
-    assetCode: { $regex: `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` },
-  });
+  const count = await Asset.countDocuments({ assetCode: { $regex: groupRegex } });
 
-  return AssetCodeIndex.buildAssetCode({ mda, type, state, year, seq: count + 1, mdaList });
+  return AssetCodeIndex.buildAssetCode({ mda, type, name, state, year, seq: count + 1, mdaList });
 }
 
 // ── Spatial computation ───────────────────────────────────────────────────────
@@ -109,6 +114,7 @@ async function createAsset(body, userId, role) {
     const assetCode = await generateAssetCode({
       mda:         body.mda,
       type:        body.type,
+      name:        body.name,
       state:       body.state,
       captureDate: body.captureDate,
     });

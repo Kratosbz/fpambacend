@@ -2,7 +2,7 @@
 const router     = require('express').Router();
 const crypto     = require('crypto');
 const User       = require('../models/User');
-const RoleConfig = require('../models/RoleConfig');
+const { getRoleConfigOverrides, ROLE_DEFAULTS, SHORT_TO_LONG } = require('../middleware/resolvePermissions');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { auditLog } = require('../middleware/auditMiddleware');
 const { validateBody, schemas } = require('../middleware/validate');
@@ -55,11 +55,33 @@ router.get('/:id', ...adminOnly, async (req, res, next) => {
     const user = await User.findById(req.params.id).select('-password').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Attach effective permissions
+    // Attach effective permissions — computed the exact same way live
+    // requests resolve them (role baseline → admin-configured role
+    // override → this user's individual override), so what the admin sees
+    // here always matches what actually gets enforced. Previously this read
+    // via the RoleConfig Mongoose model, whose schema declares long key
+    // names (canApproveAssets, ...) — but routes/role_config_routes.js
+    // actually writes to that same "roleconfigs" collection using SHORT
+    // keys (canApprove, ...) via the raw driver, bypassing the schema
+    // entirely. Mongoose can't hydrate fields it doesn't recognize, so this
+    // was silently showing empty/default values for any role an admin had
+    // ever actually customized through the Settings page.
     let effectivePermissions = { all: true };
     if (user.role !== 'System Admin') {
-      const roleConfig = await RoleConfig.findOne({ role: user.role }).lean();
-      effectivePermissions = { ...(roleConfig?.defaults || {}), ...(user.permissions || {}) };
+      const base = ROLE_DEFAULTS[user.role] || ROLE_DEFAULTS['Field Agent'];
+      const allOverrides = await getRoleConfigOverrides();
+      const roleOverride = allOverrides[user.role] || {};
+      // user.permissions is stored with the same SHORT keys the Settings/
+      // Users UI writes (validate.js's `permissions` schema) — translate
+      // before merging, same as resolvePermissions.js's actual enforcement
+      // logic, or this preview would show a different result than what
+      // actually gets enforced for this user.
+      const rawUserOverride = user.permissions || {};
+      const userOverride = {};
+      for (const [key, val] of Object.entries(rawUserOverride)) {
+        userOverride[SHORT_TO_LONG[key] || key] = val;
+      }
+      effectivePermissions = { ...base, ...roleOverride, ...userOverride };
     }
 
     res.json({ user, effectivePermissions });
@@ -136,58 +158,19 @@ router.post('/:id/reset-password', ...adminOnly, async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Role configuration
+// NOTE: role configuration (GET/PUT/POST /role-config...) intentionally
+// lives ONLY in routes/role_config_routes.js now, mounted at
+// /api/users/role-config in app.js — BEFORE this router. A duplicate set of
+// role-config routes used to live here too, at the exact same path
+// (/api/users/role-config), using the RoleConfig Mongoose model's long key
+// names. Since Express matches mounted routers in registration order and
+// role_config_routes.js is mounted first, these were permanently
+// unreachable dead code — every request matched role_config_routes.js
+// first and never got here at all. They also used an incompatible key
+// shape from what users.html's admin UI actually sends/expects (short
+// keys), so even if the mount order were fixed, wiring them back in would
+// have broken the Settings page rather than fixed anything. Removed rather
+// than resurrected.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// GET /api/role-config
-router.get('/role-config', ...adminOnly, async (req, res, next) => {
-  try {
-    const configs = await RoleConfig.find().lean();
-    res.json({ configs });
-  } catch (err) { next(err); }
-});
-
-// PUT /api/role-config/:role
-router.put('/role-config/:role',
-  ...adminOnly,
-  auditLog('ROLE_CONFIG_CHANGED', 'RoleConfig'),
-  async (req, res, next) => {
-    try {
-      const { role } = req.params;
-      if (role === 'System Admin') {
-        return res.status(400).json({ error: 'System Admin permissions cannot be changed' });
-      }
-      const config = await RoleConfig.findOneAndUpdate(
-        { role },
-        { $set: { defaults: req.body, updatedBy: req.user._id } },
-        { new: true, upsert: true }
-      ).lean();
-      res.locals.auditDetail = `${role} defaults updated`;
-      res.json({ config });
-    } catch (err) { next(err); }
-  }
-);
-
-// POST /api/role-config/reset
-router.post('/role-config/reset',
-  ...adminOnly,
-  auditLog('ROLE_CONFIG_CHANGED', 'RoleConfig'),
-  async (req, res, next) => {
-    try {
-      const DEFAULTS = RoleConfig.FACTORY_DEFAULTS;
-      await Promise.all(
-        Object.entries(DEFAULTS).map(([role, defaults]) =>
-          RoleConfig.findOneAndUpdate(
-            { role },
-            { $set: { defaults, updatedBy: req.user._id } },
-            { upsert: true, new: true }
-          )
-        )
-      );
-      res.locals.auditDetail = 'All role configs reset to factory defaults';
-      res.json({ message: 'Role configs reset to factory defaults' });
-    } catch (err) { next(err); }
-  }
-);
 
 module.exports = router;

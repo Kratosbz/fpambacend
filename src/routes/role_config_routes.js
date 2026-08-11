@@ -20,7 +20,7 @@ const adminOnly = [...auth, requirePerm('canManageSettings')];
 const FRONTEND_KEYS = [
   'canCreate', 'canEdit', 'canDelete', 'canApprove',
   'canExport', 'canViewAll', 'canManageUsers', 'canViewAudit', 'canManageSettings',
-  'canEditInventory',                              // ← add
+  'canEditInventory', 'canSubmitFormRequests', 'canReviewFormRequests',
 ];
 
 const TO_SHORT = {
@@ -31,9 +31,9 @@ const TO_SHORT = {
   canExportData:     'canExport',
   canViewAuditLog:   'canViewAudit',
   canChangeSettings: 'canManageSettings',
-  canEditInventory:  'canEditInventory',            // ← add — passes through unchanged
-  // ...rest unchanged
-  canEditInventory:  'canEditInventory',            // ← also add to the short-keys-pass-through block
+  canEditInventory:      'canEditInventory',      // passes through unchanged — already short
+  canSubmitFormRequests: 'canSubmitFormRequests', // passes through unchanged — already short
+  canReviewFormRequests: 'canReviewFormRequests', // passes through unchanged — already short
 };
 
 // Normalize any mix of long/short keys → short keys only
@@ -56,21 +56,25 @@ const FACTORY_DEFAULTS = {
     canCreate: true,  canEdit: false, canDelete: false, canApprove: false,
     canExport: false, canViewAll: false, canManageUsers: false,
     canViewAudit: false, canManageSettings: false,
+    canEditInventory: false, canSubmitFormRequests: true, canReviewFormRequests: false,
   },
   'Sub-Head': {
     canCreate: true,  canEdit: false, canDelete: false, canApprove: true,
     canExport: false, canViewAll: true, canManageUsers: false,
     canViewAudit: false, canManageSettings: false,
+    canEditInventory: false, canSubmitFormRequests: true, canReviewFormRequests: true,
   },
   'Supervisor': {
     canCreate: true,  canEdit: true,  canDelete: true,  canApprove: true,
     canExport: true,  canViewAll: true, canManageUsers: false,
     canViewAudit: true, canManageSettings: false,
+    canEditInventory: true, canSubmitFormRequests: true, canReviewFormRequests: true,
   },
   'GIS Analyst': {
     canCreate: false, canEdit: false, canDelete: false, canApprove: false,
     canExport: true,  canViewAll: true, canManageUsers: false,
     canViewAudit: true, canManageSettings: false,
+    canEditInventory: false, canSubmitFormRequests: true, canReviewFormRequests: false,
   },
 };
 
