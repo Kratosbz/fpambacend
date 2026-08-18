@@ -32,6 +32,8 @@ const FORM_TYPES = [
   'CERTIFICATION_REQUEST',                   // 013
   'EQUIPMENT_CALIBRATION_CERTIFICATE',       // 014
   'EQUIPMENT_DISPOSAL_DECOMMISSIONING',      // 015
+  'SECURITY_SERVICES_COST_TEMPLATE',         // 016
+  'JANITORIAL_SERVICES_COST_TEMPLATE',       // 017
 ];
 
 const STATUS_VALUES = ['Draft', 'Submitted', 'UnderReview', 'Approved', 'Deferred', 'Rejected'];
@@ -470,6 +472,51 @@ const disposalDecommissioningSchema = new Schema({
   },
 }, { _id: false });
 
+// ── 016: Security Services Cost Template ──────────────────────────────────────
+// Deliberately lightweight rather than a field-for-field digitization of the
+// full 30+ line-item cost worksheet (personnel rates, equipment, DTA,
+// overhead, VAT breakdown) — the officer reviewing this mainly needs to see
+// the completed worksheet itself and sort/find submissions by facility and
+// total, not query individual line items. The actual filled-in worksheet
+// goes in `attachments` (the shared attachment array on the main schema
+// below), using the same generic file storage that every other form type's
+// attachments already use.
+const securityServicesCostSchema = new Schema({
+  facilityName:              String,
+  contactPerson:             String,
+  contactPhoneEmail:         String,
+  periodCovered:             String,   // e.g. "2026" or "Q1 2026"
+  proposedStaffCount:        Number,
+  totalPersonnelCostAnnual:  Number,   // Fixed Maintenance Cost (Personnel) — Summary line
+  totalEquipmentCostAnnual:  Number,   // Security Equipment & Tools — Summary line
+  contingency:                Number,
+  projectAdministration:      Number,
+  grandTotalAnnual:           Number,  // post-VAT, matches the worksheet's own Grand Total
+  grandTotalMonthly:          Number,
+  remarks:                    String,
+}, { _id: false });
+
+// ── 017: Janitorial Services Cost Template ────────────────────────────────────
+// Same lightweight-summary approach as 016, for the Janitorial/Horticulture/
+// Minor Routine Repairs worksheet (staff, tools, cleaning consumables,
+// mechanical + electrical fixed maintenance, horticulture equipment).
+const janitorialServicesCostSchema = new Schema({
+  facilityName:                        String,
+  contactPerson:                       String,
+  contactPhoneEmail:                   String,
+  periodCovered:                       String,
+  proposedStaffCount:                  Number,
+  totalStaffCostAnnual:                Number,   // Staff Payment Cost — Summary line
+  totalCleaningConsumablesCostAnnual:  Number,
+  mechanicalServicesCostAnnual:        Number,
+  electricalServicesCostAnnual:        Number,
+  contingency:                          Number,
+  projectAdministration:                Number,
+  grandTotalAnnual:                     Number,
+  grandTotalMonthly:                    Number,
+  remarks:                              String,
+}, { _id: false });
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN SCHEMA
 // ═══════════════════════════════════════════════════════════════════════════
@@ -508,6 +555,8 @@ const formRequestSchema = new Schema({
   certificationRequest:    certificationRequestSchema,
   calibrationSubmission:   calibrationSubmissionSchema,
   disposalDecommissioning: disposalDecommissioningSchema,
+  securityServicesCost:    securityServicesCostSchema,
+  janitorialServicesCost:  janitorialServicesCostSchema,
 
   attachments: [attachmentSchema],
 

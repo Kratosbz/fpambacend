@@ -21,6 +21,31 @@ function assetQuery(id) {
   return isObjectId ? { _id: id } : { assetId: id };
 }
 
+// Filing an M&E report (creating, editing, issuing clearance, or deleting)
+// is restricted to System Admin or anyone assigned to the Monitoring &
+// Evaluation division. division:'All' is included deliberately — per its
+// own definition on models/User.js, 'All' is how cross-division roles like
+// Supervisor are marked, and the field's whole documented purpose is
+// exactly this kind of division-scoped feature gate. It was defined on the
+// User schema but never actually checked anywhere in the backend until now.
+// Viewing reports (GET) stays open to any authenticated user — only the
+// filing/editing/clearance actions are restricted.
+function canFileMeReports(req) {
+  return req.user.role === 'System Admin'
+      || req.user.division === 'Monitoring & Evaluation'
+      || req.user.division === 'All';
+}
+
+function requireMeDivision(req, res, next) {
+  if (!canFileMeReports(req)) {
+    return res.status(403).json({
+      error: 'Only System Admin or a user in the Monitoring & Evaluation division can file M&E reports',
+      yourRole: req.user?.role, yourDivision: req.user?.division,
+    });
+  }
+  next();
+}
+
 // Secretariat task template
 const SECRETARIAT_TASKS = [
   'General Cleaning of the Complex and its Surrounding',
@@ -98,7 +123,7 @@ router.get('/me-reports/templates', ...auth, (req, res) => {
 });
 
 // ── POST /api/assets/:id/me-reports ──────────────────────────────────────────
-router.post('/:id/me-reports', ...auth, auditLog('ME_REPORT_SUBMITTED', 'Asset'), async (req, res) => {
+router.post('/:id/me-reports', ...auth, requireMeDivision, auditLog('ME_REPORT_SUBMITTED', 'Asset'), async (req, res) => {
   try {
     const asset = await Asset.findOne(assetQuery(req.params.id));
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
@@ -141,7 +166,7 @@ router.post('/:id/me-reports', ...auth, auditLog('ME_REPORT_SUBMITTED', 'Asset')
 
 // ── PATCH /api/assets/:id/me-reports/:rid ────────────────────────────────────
 // Used for: editing a draft, issuing clearance, changing status
-router.patch('/:id/me-reports/:rid', ...auth, auditLog('ME_REPORT_UPDATED', 'Asset'), async (req, res) => {
+router.patch('/:id/me-reports/:rid', ...auth, requireMeDivision, auditLog('ME_REPORT_UPDATED', 'Asset'), async (req, res) => {
   try {
     const asset = await Asset.findOne(assetQuery(req.params.id));
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
@@ -193,7 +218,7 @@ router.patch('/:id/me-reports/:rid', ...auth, auditLog('ME_REPORT_UPDATED', 'Ass
 });
 
 // ── DELETE /api/assets/:id/me-reports/:rid ───────────────────────────────────
-router.delete('/:id/me-reports/:rid', ...auth, auditLog('ME_REPORT_DELETED', 'Asset'), async (req, res) => {
+router.delete('/:id/me-reports/:rid', ...auth, requireMeDivision, auditLog('ME_REPORT_DELETED', 'Asset'), async (req, res) => {
   try {
     const asset = await Asset.findOne(assetQuery(req.params.id));
     if (!asset) return res.status(404).json({ error: 'Asset not found' });

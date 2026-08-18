@@ -137,6 +137,15 @@ router.post('/',
       // Map formType -> the correct embedded sub-document field name, e.g.
       // MAINTENANCE_COMPLIANCE_DECLARATION -> complianceDeclaration
       const FIELD_MAP = {
+        // NOTE: this intentionally duplicates form_field_defs.js's
+        // FORM_DATA_FIELD — form_field_defs.js is a frontend-only file
+        // (served as a <script> tag to mda_portal.html/form_requests.html)
+        // and isn't deployed to the backend at all, so this route file has
+        // no filesystem path to it and can't require() it. This map has to
+        // be kept in sync by hand whenever a form type is added or
+        // renamed — both this file AND form_field_defs.js need the update,
+        // as happened when SECURITY_SERVICES_COST_TEMPLATE and
+        // JANITORIAL_SERVICES_COST_TEMPLATE were added.
         MAINTENANCE_COMPLIANCE_DECLARATION: 'complianceDeclaration',
         ASSET_INVENTORY_DECLARATION:        'inventoryDeclaration',
         PREVENTIVE_MAINTENANCE_SCHEDULE:    'pmSchedule',
@@ -152,6 +161,8 @@ router.post('/',
         CERTIFICATION_REQUEST:              'certificationRequest',
         EQUIPMENT_CALIBRATION_CERTIFICATE:  'calibrationSubmission',
         EQUIPMENT_DISPOSAL_DECOMMISSIONING: 'disposalDecommissioning',
+        SECURITY_SERVICES_COST_TEMPLATE:    'securityServicesCost',
+        JANITORIAL_SERVICES_COST_TEMPLATE:  'janitorialServicesCost',
       };
       const field = FIELD_MAP[formType];
       doc[field] = formData[field] || formData;   // accept either nested or flat body shape

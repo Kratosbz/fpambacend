@@ -79,4 +79,49 @@ async function deletePhoto(fileId) {
   await bucket.delete(new Types.ObjectId(fileId));
 }
 
-module.exports = { storePhoto, streamPhoto, deletePhoto };
+// ── Generic (non-image) file storage ────────────────────────────────────────
+// storePhoto() above is image-only by design — it unconditionally runs the
+// file through sharp() for resize/JPEG re-encode, which throws on anything
+// that isn't a real image (a PDF, a Word doc, an Excel file). Certificate
+// PDFs and form-request supporting documents were being routed through
+// storePhoto() anyway (via a `photoSvc.storeGenericFile ? ... : storePhoto`
+// feature-detection check that always fell through, since this function
+// never existed) — meaning every non-image certificate/attachment upload
+// was failing outright. This stores the raw buffer straight into GridFS
+// with no image processing, using the same `documents` bucket and pattern
+// already proven working in routes/documents.js.
+async function storeGenericFile(file, ownerId, uploadedBy) {
+  const buckets = getBuckets();
+  const bucket  = buckets.documents;
+
+  const fileId = new Types.ObjectId();
+  const safeOriginal = (file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const fname  = `${ownerId || 'file'}_${Date.now()}_${safeOriginal}`;
+
+  const metadata = {
+    ownerId, fileType: 'generic', uploadedBy,
+    mimeType: file.mimetype, originalName: file.originalname,
+  };
+
+  await uploadBuffer(bucket, fileId, fname, file.buffer, metadata);
+
+  return { fileId, filename: fname, sizeBytes: file.buffer.length, mimeType: file.mimetype };
+}
+
+// Streams back with the file's ACTUAL stored mimetype/filename, unlike
+// streamPhoto() which unconditionally serves everything as image/jpeg —
+// correct for photos, wrong (and previously silently broken) for anything
+// stored via storeGenericFile above.
+async function streamGenericFile(fileId, res) {
+  const bucket = getBuckets().documents;
+  const files  = await bucket.find({ _id: new Types.ObjectId(fileId) }).toArray();
+  if (!files.length) return null;
+
+  const f = files[0];
+  res.set('Content-Type', f.metadata?.mimeType || 'application/octet-stream');
+  res.set('Content-Disposition', `inline; filename="${f.metadata?.originalName || f.filename}"`);
+  bucket.openDownloadStream(new Types.ObjectId(fileId)).pipe(res);
+  return true;
+}
+
+module.exports = { storePhoto, streamPhoto, deletePhoto, storeGenericFile, streamGenericFile };
