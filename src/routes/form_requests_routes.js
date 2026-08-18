@@ -248,9 +248,7 @@ router.post('/:id/attachments',
         return res.status(403).json({ error: 'Not authorized' });
       }
 
-      const result = await photoSvc.storeGenericFile
-        ? await photoSvc.storeGenericFile(req.file)
-        : await photoSvc.storePhoto(req.file, request.mda, req.user._id.toString());
+      const result = await photoSvc.storeGenericFile(req.file, request._id.toString(), req.user._id.toString());
 
       request.attachments.push({
         fileId:       result.fileId,
@@ -284,9 +282,7 @@ router.post('/:id/issue-certificate',
       if (!request) return res.status(404).json({ error: 'Request not found' });
       if (!req.file) return res.status(400).json({ error: 'No certificate PDF uploaded' });
 
-      const result = await photoSvc.storeGenericFile
-        ? await photoSvc.storeGenericFile(req.file)
-        : await photoSvc.storePhoto(req.file, request.mda, req.user._id.toString());
+      const result = await photoSvc.storeGenericFile(req.file, request._id.toString(), req.user._id.toString());
 
       request.certificateIssued   = true;
       request.certificateFileId   = result.fileId;
@@ -367,8 +363,35 @@ router.get('/:id/certificate', ...auth, async (req, res, next) => {
       return res.status(404).json({ error: 'No certificate has been issued for this request' });
     }
 
-    const found = await photoSvc.streamPhoto(request.certificateFileId, res);
+    const found = await photoSvc.streamGenericFile(request.certificateFileId, res);
     if (!found) res.status(404).json({ error: 'Certificate file not found in storage' });
+  } catch (err) { next(err); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DOWNLOAD ONE ATTACHMENT — the upload side of this (POST /:id/attachments
+// above) has existed since the beginning, but there was never a matching
+// download route, and neither mda_portal.js nor form_requests.js ever
+// called it — the whole attachment feature had no way in OR out on the
+// frontend. This is the "out" half; the frontend upload/download UI is a
+// separate, larger addition.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/:id/attachments/:attachmentId', ...auth, async (req, res, next) => {
+  try {
+    const request = await FormRequest.findById(req.params.id).lean();
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+
+    // Same ownership rule as the POST above: FPAM reviewers see everything,
+    // an MDA Agent only their own MDA's requests.
+    if (req.user.role === 'MDA Agent' && request.mda !== req.user.mda) {
+      return res.status(403).json({ error: 'Not authorized to view this attachment' });
+    }
+
+    const attachment = (request.attachments || []).find(a => String(a._id) === req.params.attachmentId);
+    if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+
+    const found = await photoSvc.streamGenericFile(attachment.fileId, res);
+    if (!found) res.status(404).json({ error: 'Attachment file not found in storage' });
   } catch (err) { next(err); }
 });
 
